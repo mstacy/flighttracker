@@ -21,13 +21,14 @@ export class WebglGlobeComponent implements OnInit {
     airplaneTexture!: THREE.Texture;
     flightCache: any[] = [];
     lastFetchTime: number = 0;
-    cacheDuration = 60000 * 60; // Cache data for 60 seconds
+    cacheDuration = 15000; // Cache data for 15 seconds
     flightDataMap: Map<THREE.Object3D, any> = new Map();
 
     ngOnInit() {
         this.initThreeJS();
         this.loadAirplaneTexture();
         this.renderFlights();
+        setInterval(() => this.updateFlightData(), 30000);
     }
 
     initThreeJS() {
@@ -45,7 +46,7 @@ export class WebglGlobeComponent implements OnInit {
         );
 
         const textureLoader = new THREE.TextureLoader();
-        const earthTexture = textureLoader.load('/earth_atmos_2048.jpg');
+        const earthTexture = textureLoader.load('earth_atmos_2048.jpg');
 
         const earthGeometry = new THREE.SphereGeometry(5, 50, 50);
         const earthMaterial = new THREE.MeshBasicMaterial({
@@ -56,6 +57,11 @@ export class WebglGlobeComponent implements OnInit {
 
         this.flightGroup = new THREE.Group();
         this.earthMesh.add(this.flightGroup);
+
+        // Center the globe on San Diego (32.6831°N, 117.4746°W)
+        const targetPos = this.latLonToSphere(32.6831, -117.4746, 5);
+        this.earthMesh.rotation.y = -targetPos.x * 0.1;
+        this.earthMesh.rotation.x = targetPos.y * 0.1;
 
         this.camera.position.z = 10;
         this.animate();
@@ -71,7 +77,7 @@ export class WebglGlobeComponent implements OnInit {
 
     loadAirplaneTexture() {
         const textureLoader = new THREE.TextureLoader();
-        this.airplaneTexture = textureLoader.load('/plane512.png');
+        this.airplaneTexture = textureLoader.load('plane64.png');
     }
 
     async fetchFlightData() {
@@ -83,10 +89,9 @@ export class WebglGlobeComponent implements OnInit {
             return this.flightCache;
         }
 
-        // const response = await fetch(
-        //     'https://opensky-network.org/api/states/all'
-        // );
-        const response = await fetch('/flights.json');
+        const response = await fetch(
+            'https://opensky-network.org/api/states/all'
+        );
         const data = await response.json();
         this.flightCache = data.states;
         this.lastFetchTime = currentTime;
@@ -100,11 +105,13 @@ export class WebglGlobeComponent implements OnInit {
             radius * Math.sin(phi) * Math.cos(theta),
             radius * Math.cos(phi),
             radius * Math.sin(phi) * Math.sin(theta)
-        ).applyQuaternion(this.earthMesh.quaternion); // Adjusting for current globe rotation
+        );
     }
 
     async renderFlights() {
         const flights = await this.fetchFlightData();
+        this.flightGroup.clear(); // Clear previous flight markers
+        this.flightDataMap.clear();
 
         flights.forEach(
             ([
@@ -132,16 +139,15 @@ export class WebglGlobeComponent implements OnInit {
                 number,
                 number
             ]) => {
-                if (lat && lon) {
+                if (lat && lon && !on_ground) {
                     const pos = this.latLonToSphere(lat, lon, 5.1);
                     const airplaneMaterial = new THREE.SpriteMaterial({
                         map: this.airplaneTexture,
-                        rotation: true_track - 45,
+                        rotation: true_track - 45, // Adjusted for angle of airplane image
                     });
 
                     const airplane = new THREE.Sprite(airplaneMaterial);
                     airplane.scale.set(0.1, 0.1, 1);
-                    // airplane.position.set(pos.x, pos.y, pos.z);
                     airplane.position.copy(pos);
                     this.flightGroup.add(airplane);
                     this.flightDataMap.set(airplane, {
@@ -155,7 +161,6 @@ export class WebglGlobeComponent implements OnInit {
     }
 
     onMouseClick(event: MouseEvent) {
-        console.log('mouse clicked');
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
 
@@ -166,11 +171,11 @@ export class WebglGlobeComponent implements OnInit {
         const intersects = raycaster.intersectObjects(
             this.flightGroup.children
         );
-        console.log(intersects);
+
         if (intersects.length > 0) {
             const flight = intersects[0].object;
             const data = this.flightDataMap.get(flight);
-            console.log(data);
+
             if (data) {
                 this.showTooltip(
                     event.clientX,
@@ -224,10 +229,14 @@ export class WebglGlobeComponent implements OnInit {
     }
 
     onMouseWheel(event: WheelEvent) {
-        this.camera.position.z += event.deltaY * 0.01;
+        this.camera.position.z += event.deltaY * 0.005;
         this.camera.position.z = Math.max(
             5.2,
             Math.min(20, this.camera.position.z)
         );
+    }
+
+    async updateFlightData() {
+        await this.renderFlights();
     }
 }
