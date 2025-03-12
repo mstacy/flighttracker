@@ -4,7 +4,7 @@ import * as THREE from 'three';
 @Component({
     selector: 'app-webgl-globe',
     template:
-        '<div #rendererContainer (mousedown)="onMouseDown($event)" (mousemove)="onMouseMove($event)" (mouseup)="onMouseUp()" (wheel)="onMouseWheel($event)"></div>',
+        '<div #rendererContainer (mousedown)="onMouseDown($event)" (mousemove)="onMouseMove($event)" (mouseup)="onMouseUp()" (wheel)="onMouseWheel($event)"></div><div id="tooltip" style="position: absolute; display: none; background: white; padding: 5px; border: 1px solid black;"></div>',
     styleUrls: ['./webgl-globe.component.css'],
 })
 export class WebglGlobeComponent implements OnInit {
@@ -18,9 +18,15 @@ export class WebglGlobeComponent implements OnInit {
     isDragging = false;
     previousMouseX = 0;
     previousMouseY = 0;
+    airplaneTexture!: THREE.Texture;
+    flightCache: any[] = [];
+    lastFetchTime: number = 0;
+    cacheDuration = 60000 * 60; // Cache data for 60 seconds
+    flightDataMap: Map<THREE.Object3D, any> = new Map();
 
     ngOnInit() {
         this.initThreeJS();
+        this.loadAirplaneTexture();
         this.renderFlights();
     }
 
@@ -53,6 +59,9 @@ export class WebglGlobeComponent implements OnInit {
 
         this.camera.position.z = 10;
         this.animate();
+        this.renderer.domElement.addEventListener('click', (event) =>
+            this.onMouseClick(event)
+        );
     }
 
     animate = () => {
@@ -60,30 +69,52 @@ export class WebglGlobeComponent implements OnInit {
         this.renderer.render(this.scene, this.camera);
     };
 
-    async fetchFlightData() {
-        const response = await fetch(
-            'https://opensky-network.org/api/states/all'
-        );
-        const data = await response.json();
-        return data.states;
+    loadAirplaneTexture() {
+        console.log('loading airplane texture');
+        const textureLoader = new THREE.TextureLoader();
+        this.airplaneTexture = textureLoader.load('/plane512.png');
     }
 
+    async fetchFlightData() {
+        const currentTime = Date.now();
+        if (
+            this.flightCache &&
+            currentTime - this.lastFetchTime < this.cacheDuration
+        ) {
+            return this.flightCache;
+        }
+
+        // const response = await fetch(
+        //     'https://opensky-network.org/api/states/all'
+        // );
+        const response = await fetch('/flight.json');
+        const data = await response.json();
+        this.flightCache = data.states;
+        this.lastFetchTime = currentTime;
+        return this.flightCache;
+    }
+
+    // latLonToSphere(lat: number, lon: number, radius: number) {
+    //     const phi = (90 - lat) * (Math.PI / 180);
+    //     const theta = lon * (Math.PI / 180);
+    //     return {
+    //         x: radius * Math.sin(phi) * Math.cos(theta),
+    //         y: radius * Math.cos(phi),
+    //         z: radius * Math.sin(phi) * Math.sin(theta),
+    //     };
+    // }
+
     latLonToSphere(lat: number, lon: number, radius: number) {
-        const phi = (90 - lat) * (Math.PI / 180);
-        const theta = (lon + 180) * (Math.PI / 180);
-        return {
-            x: radius * Math.sin(phi) * Math.cos(theta),
-            y: radius * Math.cos(phi),
-            z: radius * Math.sin(phi) * Math.sin(theta),
-        };
+        const latRad = (lat * Math.PI) / 180;
+        const lonRad = -lon * (Math.PI / 180);
+        const x = radius * Math.cos(latRad) * Math.cos(lonRad);
+        const y = radius * Math.cos(latRad) * Math.sin(lonRad);
+        const z = radius * Math.sin(latRad);
+        return { x, y, z };
     }
 
     async renderFlights() {
         const flights = await this.fetchFlightData();
-        const airplaneGeometry = new THREE.SphereGeometry(0.1, 10, 10);
-        const airplaneMaterial = new THREE.MeshBasicMaterial({
-            color: 0xff0000,
-        });
 
         flights.forEach(
             ([
@@ -95,6 +126,9 @@ export class WebglGlobeComponent implements OnInit {
                 lon,
                 lat,
                 altitude,
+                on_ground,
+                velocity,
+                true_track,
             ]: [
                 string,
                 string,
@@ -103,22 +137,34 @@ export class WebglGlobeComponent implements OnInit {
                 number,
                 number,
                 number,
+                number,
+                boolean,
+                number,
                 number
             ]) => {
                 if (lat && lon) {
                     const pos = this.latLonToSphere(lat, lon, 5.1);
-                    const airplane = new THREE.Mesh(
-                        airplaneGeometry,
-                        airplaneMaterial
-                    );
+                    const airplaneMaterial = new THREE.SpriteMaterial({
+                        map: this.airplaneTexture,
+                        rotation: true_track - 45,
+                    });
+
+                    const airplane = new THREE.Sprite(airplaneMaterial);
+                    airplane.scale.set(0.1, 0.1, 1);
                     airplane.position.set(pos.x, pos.y, pos.z);
                     this.flightGroup.add(airplane);
+                    this.flightDataMap.set(airplane, {
+                        callsign,
+                        altitude,
+                        velocity,
+                    });
                 }
             }
         );
     }
 
     onMouseClick(event: MouseEvent) {
+        console.log('mouse clicked');
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
 
@@ -126,10 +172,40 @@ export class WebglGlobeComponent implements OnInit {
         mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
         raycaster.setFromCamera(mouse, this.camera);
-        const intersects = raycaster.intersectObjects(this.scene.children);
-
+        const intersects = raycaster.intersectObjects(
+            this.flightGroup.children
+        );
+        console.log(intersects);
         if (intersects.length > 0) {
-            console.log('Flight clicked:', intersects[0].object);
+            const flight = intersects[0].object;
+            const data = this.flightDataMap.get(flight);
+            console.log(data);
+            if (data) {
+                this.showTooltip(
+                    event.clientX,
+                    event.clientY,
+                    `Callsign: ${data.callsign}<br>Altitude: ${data.altitude}m<br>Velocity: ${data.velocity}m/s`
+                );
+            }
+        } else {
+            this.hideTooltip();
+        }
+    }
+
+    showTooltip(x: number, y: number, content: string) {
+        const tooltip = document.getElementById('tooltip');
+        if (tooltip) {
+            tooltip.innerHTML = content;
+            tooltip.style.left = `${x + 10}px`;
+            tooltip.style.top = `${y + 10}px`;
+            tooltip.style.display = 'block';
+        }
+    }
+
+    hideTooltip() {
+        const tooltip = document.getElementById('tooltip');
+        if (tooltip) {
+            tooltip.style.display = 'none';
         }
     }
 
@@ -159,7 +235,7 @@ export class WebglGlobeComponent implements OnInit {
     onMouseWheel(event: WheelEvent) {
         this.camera.position.z += event.deltaY * 0.01;
         this.camera.position.z = Math.max(
-            3,
+            5.2,
             Math.min(20, this.camera.position.z)
         );
     }
