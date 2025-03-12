@@ -70,7 +70,6 @@ export class WebglGlobeComponent implements OnInit {
     };
 
     loadAirplaneTexture() {
-        console.log('loading airplane texture');
         const textureLoader = new THREE.TextureLoader();
         this.airplaneTexture = textureLoader.load('/plane512.png');
     }
@@ -87,30 +86,21 @@ export class WebglGlobeComponent implements OnInit {
         // const response = await fetch(
         //     'https://opensky-network.org/api/states/all'
         // );
-        const response = await fetch('/flight.json');
+        const response = await fetch('/flights.json');
         const data = await response.json();
         this.flightCache = data.states;
         this.lastFetchTime = currentTime;
         return this.flightCache;
     }
 
-    // latLonToSphere(lat: number, lon: number, radius: number) {
-    //     const phi = (90 - lat) * (Math.PI / 180);
-    //     const theta = lon * (Math.PI / 180);
-    //     return {
-    //         x: radius * Math.sin(phi) * Math.cos(theta),
-    //         y: radius * Math.cos(phi),
-    //         z: radius * Math.sin(phi) * Math.sin(theta),
-    //     };
-    // }
-
     latLonToSphere(lat: number, lon: number, radius: number) {
-        const latRad = (lat * Math.PI) / 180;
-        const lonRad = -lon * (Math.PI / 180);
-        const x = radius * Math.cos(latRad) * Math.cos(lonRad);
-        const y = radius * Math.cos(latRad) * Math.sin(lonRad);
-        const z = radius * Math.sin(latRad);
-        return { x, y, z };
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = -lon * (Math.PI / 180); // Adjusted for sphere orientation
+        return new THREE.Vector3(
+            radius * Math.sin(phi) * Math.cos(theta),
+            radius * Math.cos(phi),
+            radius * Math.sin(phi) * Math.sin(theta)
+        ).applyQuaternion(this.earthMesh.quaternion); // Adjusting for current globe rotation
     }
 
     async renderFlights() {
@@ -151,7 +141,8 @@ export class WebglGlobeComponent implements OnInit {
 
                     const airplane = new THREE.Sprite(airplaneMaterial);
                     airplane.scale.set(0.1, 0.1, 1);
-                    airplane.position.set(pos.x, pos.y, pos.z);
+                    // airplane.position.set(pos.x, pos.y, pos.z);
+                    airplane.position.copy(pos);
                     this.flightGroup.add(airplane);
                     this.flightDataMap.set(airplane, {
                         callsign,
