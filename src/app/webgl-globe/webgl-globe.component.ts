@@ -4,7 +4,7 @@ import * as THREE from 'three';
 @Component({
     selector: 'app-webgl-globe',
     template:
-        '<div #rendererContainer (mousedown)="onMouseDown($event)" (mousemove)="onMouseMove($event)" (mouseup)="onMouseUp()" (wheel)="onMouseWheel($event)"></div><div id="tooltip" style="position: absolute; display: none; background: white; padding: 5px; border: 1px solid black;"></div>',
+        '<div #rendererContainer (mousedown)="onMouseDown($event)" (mousemove)="onMouseMove($event)" (mouseup)="onMouseUp()" (wheel)="onMouseWheel($event)" (touchstart)="onTouchStart($event)" (touchmove)="onTouchMove($event)" (touchend)="onTouchEnd()"></div><div id="tooltip" style="position: absolute; display: none; background: white; padding: 5px; border: 1px solid black;"></div>',
     styleUrls: ['./webgl-globe.component.css'],
 })
 export class WebglGlobeComponent implements OnInit {
@@ -23,6 +23,8 @@ export class WebglGlobeComponent implements OnInit {
     lastFetchTime: number = 0;
     cacheDuration = 15000; // Cache data for 15 seconds
     flightDataMap: Map<THREE.Object3D, any> = new Map();
+    private initialPinchDistance: number = 0;
+    private initialCameraZ: number = 0;
 
     ngOnInit() {
         this.initThreeJS();
@@ -234,6 +236,63 @@ export class WebglGlobeComponent implements OnInit {
             5.2,
             Math.min(20, this.camera.position.z)
         );
+    }
+
+    onTouchStart(event: TouchEvent) {
+        event.preventDefault();
+        this.isDragging = true;
+
+        if (event.touches.length === 2) {
+            // Pinch to zoom
+            this.initialPinchDistance = this.getPinchDistance(event.touches);
+            this.initialCameraZ = this.camera.position.z;
+        } else if (event.touches.length === 1) {
+            // Single touch for rotation
+            this.previousMouseX = event.touches[0].clientX;
+            this.previousMouseY = event.touches[0].clientY;
+        }
+    }
+
+    onTouchMove(event: TouchEvent) {
+        event.preventDefault();
+
+        if (event.touches.length === 2) {
+            // Handle pinch zoom
+            const currentPinchDistance = this.getPinchDistance(event.touches);
+            const pinchDelta = currentPinchDistance - this.initialPinchDistance;
+            const zoomFactor = 0.01;
+
+            this.camera.position.z =
+                this.initialCameraZ - pinchDelta * zoomFactor;
+            this.camera.position.z = Math.max(
+                5.2,
+                Math.min(20, this.camera.position.z)
+            );
+        } else if (event.touches.length === 1) {
+            // Handle rotation
+            const deltaX = event.touches[0].clientX - this.previousMouseX;
+            const deltaY = event.touches[0].clientY - this.previousMouseY;
+
+            this.earthMesh.rotation.y += deltaX * 0.005;
+            this.earthMesh.rotation.x += deltaY * 0.005;
+
+            this.previousMouseX = event.touches[0].clientX;
+            this.previousMouseY = event.touches[0].clientY;
+        }
+    }
+
+    onTouchEnd() {
+        this.isDragging = false;
+        this.initialPinchDistance = 0;
+        this.initialCameraZ = 0;
+    }
+
+    private getPinchDistance(touches: TouchList): number {
+        const touch1 = touches[0];
+        const touch2 = touches[1];
+        const dx = touch1.clientX - touch2.clientX;
+        const dy = touch1.clientY - touch2.clientY;
+        return Math.sqrt(dx * dx + dy * dy);
     }
 
     async updateFlightData() {
