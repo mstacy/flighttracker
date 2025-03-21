@@ -93,10 +93,10 @@ export class WebglGlobeComponent implements OnInit {
             return this.flightCache;
         }
 
-        // const response = await fetch(
-        //     'https://opensky-network.org/api/states/all'
-        // );
-        const response = await fetch(location.pathname + 'flights.json');
+        const response = await fetch(
+            'https://opensky-network.org/api/states/all'
+        );
+        // const response = await fetch(location.pathname + 'flights.json');
         const data = await response.json();
         this.flightCache = data.states;
         this.lastFetchTime = currentTime;
@@ -297,13 +297,6 @@ export class WebglGlobeComponent implements OnInit {
 
     onTouchMove(event: TouchEvent) {
         event.preventDefault();
-
-        // Update tooltip position if it's visible
-        // const tooltip = document.getElementById('tooltip');
-        // if (tooltip && tooltip.style.display === 'block') {
-        //     const touch = event.touches[0];
-        //     this.showTooltip(touch.clientX, touch.clientY, tooltip.innerHTML);
-        // }
 
         if (event.touches.length === 2) {
             // Handle pinch zoom
