@@ -25,6 +25,8 @@ export class WebglGlobeComponent implements OnInit {
     flightDataMap: Map<THREE.Object3D, any> = new Map();
     private initialPinchDistance: number = 0;
     private initialCameraZ: number = 0;
+    private rotationCooldown: number = 0;
+    private readonly ROTATION_COOLDOWN_DURATION = 500; // 500ms cooldown
 
     ngOnInit() {
         this.initThreeJS();
@@ -91,9 +93,10 @@ export class WebglGlobeComponent implements OnInit {
             return this.flightCache;
         }
 
-        const response = await fetch(
-            'https://opensky-network.org/api/states/all'
-        );
+        // const response = await fetch(
+        //     'https://opensky-network.org/api/states/all'
+        // );
+        const response = await fetch(location.pathname + 'flights.json');
         const data = await response.json();
         this.flightCache = data.states;
         this.lastFetchTime = currentTime;
@@ -242,10 +245,49 @@ export class WebglGlobeComponent implements OnInit {
         event.preventDefault();
         this.isDragging = true;
 
+        // Check for airplane touch first
+        const touch = event.touches[0];
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, this.camera);
+        const intersects = raycaster.intersectObjects(
+            this.flightGroup.children
+        );
+
+        if (Date.now() < this.rotationCooldown) {
+            return;
+        }
+
+        if (intersects.length > 0) {
+            const flight = intersects[0].object;
+            const data = this.flightDataMap.get(flight);
+
+            if (data) {
+                this.showTooltip(
+                    touch.clientX,
+                    touch.clientY,
+                    `Callsign: ${data.callsign}<br>Altitude: ${data.altitude}m<br>Velocity: ${data.velocity}m/s`
+                );
+                // Set rotation cooldown
+                this.rotationCooldown =
+                    Date.now() + this.ROTATION_COOLDOWN_DURATION;
+                return; // Don't proceed with rotation/zoom if we touched an airplane
+            }
+        } else {
+            this.hideTooltip();
+        }
+
         if (event.touches.length === 2) {
             // Pinch to zoom
             this.initialPinchDistance = this.getPinchDistance(event.touches);
             this.initialCameraZ = this.camera.position.z;
+            // Set rotation cooldown when starting pinch zoom
+            this.rotationCooldown =
+                Date.now() + this.ROTATION_COOLDOWN_DURATION;
         } else if (event.touches.length === 1) {
             // Single touch for rotation
             this.previousMouseX = event.touches[0].clientX;
@@ -255,6 +297,13 @@ export class WebglGlobeComponent implements OnInit {
 
     onTouchMove(event: TouchEvent) {
         event.preventDefault();
+
+        // Update tooltip position if it's visible
+        // const tooltip = document.getElementById('tooltip');
+        // if (tooltip && tooltip.style.display === 'block') {
+        //     const touch = event.touches[0];
+        //     this.showTooltip(touch.clientX, touch.clientY, tooltip.innerHTML);
+        // }
 
         if (event.touches.length === 2) {
             // Handle pinch zoom
@@ -269,15 +318,17 @@ export class WebglGlobeComponent implements OnInit {
                 Math.min(20, this.camera.position.z)
             );
         } else if (event.touches.length === 1) {
-            // Handle rotation
-            const deltaX = event.touches[0].clientX - this.previousMouseX;
-            const deltaY = event.touches[0].clientY - this.previousMouseY;
+            // Handle rotation only if not in cooldown
+            if (Date.now() >= this.rotationCooldown) {
+                const deltaX = event.touches[0].clientX - this.previousMouseX;
+                const deltaY = event.touches[0].clientY - this.previousMouseY;
 
-            this.earthMesh.rotation.y += deltaX * 0.005;
-            this.earthMesh.rotation.x += deltaY * 0.005;
+                this.earthMesh.rotation.y += deltaX * 0.005;
+                this.earthMesh.rotation.x += deltaY * 0.005;
 
-            this.previousMouseX = event.touches[0].clientX;
-            this.previousMouseY = event.touches[0].clientY;
+                this.previousMouseX = event.touches[0].clientX;
+                this.previousMouseY = event.touches[0].clientY;
+            }
         }
     }
 
@@ -285,6 +336,7 @@ export class WebglGlobeComponent implements OnInit {
         this.isDragging = false;
         this.initialPinchDistance = 0;
         this.initialCameraZ = 0;
+        // Don't reset rotation cooldown here - let it expire naturally
     }
 
     private getPinchDistance(touches: TouchList): number {
